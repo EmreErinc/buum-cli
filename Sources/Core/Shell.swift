@@ -125,15 +125,17 @@ struct Shell {
         return run("/bin/bash", ["-c", command], env: env, showCommand: showCommand, stream: stream, silent: silent)
     }
 
-    /// Run a command with a timeout. Terminates the process if it exceeds the limit.
+    /// Run a command interactively with a timeout.
+    /// Inherits stdin/stdout/stderr so password prompts and progress bars work natively.
+    /// Terminates the process if it exceeds the timeout.
     @discardableResult
-    static func runWithTimeout(
+    static func runInteractive(
         _ path: String,
         _ args: [String] = [],
         env: [String: String]? = nil,
         timeout: TimeInterval = 300,
         showCommand: Bool = true
-    ) -> (exitCode: Int32, stdout: String, stderr: String, timedOut: Bool) {
+    ) -> (exitCode: Int32, timedOut: Bool) {
         let environment = env ?? defaultEnv
         let cmd = ([path.components(separatedBy: "/").last ?? path] + args).joined(separator: " ")
 
@@ -141,50 +143,22 @@ struct Shell {
             Terminal.command(cmd)
         }
 
-        Logger.log("$ \(([path] + args).joined(separator: " ")) [timeout: \(Int(timeout))s]")
+        Logger.log("$ \(([path] + args).joined(separator: " ")) [interactive, timeout: \(Int(timeout))s]")
 
         let task = Process()
         task.launchPath = path
         task.arguments = args
         task.environment = environment
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        task.standardOutput = outPipe
-        task.standardError = errPipe
-
-        var stdoutData = Data()
-        var stderrData = Data()
-
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            stdoutData.append(data)
-            if let text = String(data: data, encoding: .utf8) {
-                Logger.log("stdout: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
-                for line in text.components(separatedBy: "\n") where !line.isEmpty {
-                    Terminal.line(line)
-                }
-            }
-        }
-        errPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            stderrData.append(data)
-            if let text = String(data: data, encoding: .utf8) {
-                Logger.log("stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
-                for line in text.components(separatedBy: "\n") where !line.isEmpty {
-                    Terminal.line(line, isError: true)
-                }
-            }
-        }
+        task.standardInput = FileHandle.standardInput
+        task.standardOutput = FileHandle.standardOutput
+        task.standardError = FileHandle.standardError
 
         do {
             try task.run()
         } catch {
             Logger.log("Failed to launch: \(error)")
             Terminal.error("Failed to run: \(cmd)")
-            return (-1, "", "", false)
+            return (-1, false)
         }
 
         var timedOut = false
@@ -200,20 +174,13 @@ struct Shell {
             timedOut = true
             Logger.log("TIMEOUT: \(cmd) exceeded \(Int(timeout))s — terminating")
             task.terminate()
-            // Give it a moment to clean up
             _ = group.wait(timeout: .now() + 5)
         }
-
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        errPipe.fileHandleForReading.readabilityHandler = nil
 
         let exitCode = task.terminationStatus
         Logger.log("exit: \(exitCode) (timedOut: \(timedOut))")
 
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-        return (exitCode, stdout, stderr, timedOut)
+        return (exitCode, timedOut)
     }
 
     /// Run a command with sudo, inheriting the terminal for secure password input

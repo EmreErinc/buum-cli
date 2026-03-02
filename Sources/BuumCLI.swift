@@ -13,7 +13,7 @@ struct BuumCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "buum-cli",
         abstract: "Keep your Homebrew packages and Mac App Store apps up to date — from the terminal.",
-        version: "1.0.3",
+        version: "1.0.4",
         subcommands: [
             RunCommand.self,
             DoctorCommand.self,
