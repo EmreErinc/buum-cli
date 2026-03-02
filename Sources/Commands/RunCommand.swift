@@ -122,14 +122,22 @@ struct RunCommand: ParsableCommand {
             let masOutdated = Shell.run(Shell.masPath, ["outdated"])
             allOutput += masOutdated.stdout + masOutdated.stderr
 
-            Terminal.header("Upgrading App Store apps")
-            // Run mas directly with terminal inheritance — mas needs the
-            // user's App Store session (not root), and may need terminal
-            // interaction for sign-in or progress display.
-            let masUpgrade = Shell.runDirect(Shell.masPath, ["upgrade"])
-            if masUpgrade.exitCode != 0 {
-                Terminal.warning("mas upgrade failed — make sure you're signed in to the App Store")
-                failed = true
+            let outdatedApps = masOutdated.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if outdatedApps.isEmpty {
+                Terminal.success("No App Store updates available")
+            } else {
+                Terminal.info("Outdated: \(outdatedApps.components(separatedBy: "\n").count) app(s)")
+                Terminal.header("Upgrading App Store apps")
+                let masUpgrade = Shell.runWithTimeout(Shell.masPath, ["upgrade"], timeout: 300)
+                if masUpgrade.timedOut {
+                    Terminal.warning("mas upgrade timed out — App Store may be unresponsive")
+                    Terminal.info("Try running manually: mas upgrade")
+                    failed = true
+                } else if masUpgrade.exitCode != 0 {
+                    Terminal.warning("mas upgrade failed — make sure you're signed in to the App Store")
+                    allOutput += masUpgrade.stdout + masUpgrade.stderr
+                    failed = true
+                }
             }
         }
 

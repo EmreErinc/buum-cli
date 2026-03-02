@@ -125,15 +125,15 @@ struct Shell {
         return run("/bin/bash", ["-c", command], env: env, showCommand: showCommand, stream: stream, silent: silent)
     }
 
-    /// Run a command directly inheriting the terminal (no pipes).
-    /// Use for commands like `mas upgrade` that need terminal interaction.
+    /// Run a command with a timeout. Terminates the process if it exceeds the limit.
     @discardableResult
-    static func runDirect(
+    static func runWithTimeout(
         _ path: String,
         _ args: [String] = [],
         env: [String: String]? = nil,
+        timeout: TimeInterval = 300,
         showCommand: Bool = true
-    ) -> (exitCode: Int32, stdout: String, stderr: String) {
+    ) -> (exitCode: Int32, stdout: String, stderr: String, timedOut: Bool) {
         let environment = env ?? defaultEnv
         let cmd = ([path.components(separatedBy: "/").last ?? path] + args).joined(separator: " ")
 
@@ -141,29 +141,79 @@ struct Shell {
             Terminal.command(cmd)
         }
 
-        Logger.log("$ \(([path] + args).joined(separator: " ")) [direct]")
+        Logger.log("$ \(([path] + args).joined(separator: " ")) [timeout: \(Int(timeout))s]")
 
         let task = Process()
         task.launchPath = path
         task.arguments = args
         task.environment = environment
-        task.standardInput = FileHandle.standardInput
-        task.standardOutput = FileHandle.standardOutput
-        task.standardError = FileHandle.standardError
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+
+        var stdoutData = Data()
+        var stderrData = Data()
+
+        outPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stdoutData.append(data)
+            if let text = String(data: data, encoding: .utf8) {
+                Logger.log("stdout: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+                for line in text.components(separatedBy: "\n") where !line.isEmpty {
+                    Terminal.line(line)
+                }
+            }
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            stderrData.append(data)
+            if let text = String(data: data, encoding: .utf8) {
+                Logger.log("stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+                for line in text.components(separatedBy: "\n") where !line.isEmpty {
+                    Terminal.line(line, isError: true)
+                }
+            }
+        }
 
         do {
             try task.run()
         } catch {
             Logger.log("Failed to launch: \(error)")
             Terminal.error("Failed to run: \(cmd)")
-            return (-1, "", "")
+            return (-1, "", "", false)
         }
-        task.waitUntilExit()
+
+        var timedOut = false
+        let deadline = DispatchTime.now() + timeout
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            task.waitUntilExit()
+            group.leave()
+        }
+
+        if group.wait(timeout: deadline) == .timedOut {
+            timedOut = true
+            Logger.log("TIMEOUT: \(cmd) exceeded \(Int(timeout))s — terminating")
+            task.terminate()
+            // Give it a moment to clean up
+            _ = group.wait(timeout: .now() + 5)
+        }
+
+        outPipe.fileHandleForReading.readabilityHandler = nil
+        errPipe.fileHandleForReading.readabilityHandler = nil
 
         let exitCode = task.terminationStatus
-        Logger.log("exit: \(exitCode)")
+        Logger.log("exit: \(exitCode) (timedOut: \(timedOut))")
 
-        return (exitCode, "", "")
+        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+        return (exitCode, stdout, stderr, timedOut)
     }
 
     /// Run a command with sudo, inheriting the terminal for secure password input
