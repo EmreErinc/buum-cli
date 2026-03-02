@@ -125,6 +125,47 @@ struct Shell {
         return run("/bin/bash", ["-c", command], env: env, showCommand: showCommand, stream: stream, silent: silent)
     }
 
+    /// Run a command directly inheriting the terminal (no pipes).
+    /// Use for commands like `mas upgrade` that need terminal interaction.
+    @discardableResult
+    static func runDirect(
+        _ path: String,
+        _ args: [String] = [],
+        env: [String: String]? = nil,
+        showCommand: Bool = true
+    ) -> (exitCode: Int32, stdout: String, stderr: String) {
+        let environment = env ?? defaultEnv
+        let cmd = ([path.components(separatedBy: "/").last ?? path] + args).joined(separator: " ")
+
+        if showCommand {
+            Terminal.command(cmd)
+        }
+
+        Logger.log("$ \(([path] + args).joined(separator: " ")) [direct]")
+
+        let task = Process()
+        task.launchPath = path
+        task.arguments = args
+        task.environment = environment
+        task.standardInput = FileHandle.standardInput
+        task.standardOutput = FileHandle.standardOutput
+        task.standardError = FileHandle.standardError
+
+        do {
+            try task.run()
+        } catch {
+            Logger.log("Failed to launch: \(error)")
+            Terminal.error("Failed to run: \(cmd)")
+            return (-1, "", "")
+        }
+        task.waitUntilExit()
+
+        let exitCode = task.terminationStatus
+        Logger.log("exit: \(exitCode)")
+
+        return (exitCode, "", "")
+    }
+
     /// Run a command with sudo, inheriting the terminal for secure password input
     @discardableResult
     static func runWithAuth(

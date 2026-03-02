@@ -123,19 +123,13 @@ struct RunCommand: ParsableCommand {
             allOutput += masOutdated.stdout + masOutdated.stderr
 
             Terminal.header("Upgrading App Store apps")
-            let masUpgrade = Shell.run(Shell.masPath, ["upgrade"])
-            allOutput += masUpgrade.stdout + masUpgrade.stderr
+            // Run mas directly with terminal inheritance — mas needs the
+            // user's App Store session (not root), and may need terminal
+            // interaction for sign-in or progress display.
+            let masUpgrade = Shell.runDirect(Shell.masPath, ["upgrade"])
             if masUpgrade.exitCode != 0 {
-                // Retry with sudo if auth needed
-                if masUpgrade.stderr.contains("a terminal is required") ||
-                   masUpgrade.stderr.contains("Permission denied") {
-                    Terminal.info("Retrying with admin privileges…")
-                    let authResult = Shell.runWithAuth("\(Shell.masPath) upgrade", label: "mas upgrade")
-                    allOutput += authResult.stdout + authResult.stderr
-                    if authResult.exitCode != 0 { failed = true }
-                } else {
-                    failed = true
-                }
+                Terminal.warning("mas upgrade failed — make sure you're signed in to the App Store")
+                failed = true
             }
         }
 
