@@ -125,7 +125,7 @@ struct Shell {
         return run("/bin/bash", ["-c", command], env: env, showCommand: showCommand, stream: stream, silent: silent)
     }
 
-    /// Run a command with sudo via osascript (macOS native auth dialog)
+    /// Run a command with sudo, inheriting the terminal for secure password input
     @discardableResult
     static func runWithAuth(
         _ command: String,
@@ -146,37 +146,10 @@ struct Shell {
         task.arguments = ["/bin/bash", "-c", fullCommand]
         task.environment = environment
 
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        task.standardOutput = outPipe
-        task.standardError = errPipe
-
-        var stdoutData = Data()
-        var stderrData = Data()
-
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            stdoutData.append(data)
-            if let text = String(data: data, encoding: .utf8) {
-                for line in text.components(separatedBy: "\n") where !line.isEmpty {
-                    Terminal.line(line)
-                }
-                Logger.log("stdout: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
-            }
-        }
-
-        errPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            stderrData.append(data)
-            if let text = String(data: data, encoding: .utf8) {
-                for line in text.components(separatedBy: "\n") where !line.isEmpty {
-                    Terminal.line(line, isError: true)
-                }
-                Logger.log("stderr: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
-            }
-        }
+        // Inherit the terminal directly so sudo can securely prompt for password
+        task.standardInput = FileHandle.standardInput
+        task.standardOutput = FileHandle.standardOutput
+        task.standardError = FileHandle.standardError
 
         do {
             try task.run()
@@ -187,12 +160,9 @@ struct Shell {
         }
         task.waitUntilExit()
 
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        errPipe.fileHandleForReading.readabilityHandler = nil
-
         let exitCode = task.terminationStatus
         Logger.log("exit: \(exitCode)")
 
-        return (exitCode, String(data: stdoutData, encoding: .utf8) ?? "", String(data: stderrData, encoding: .utf8) ?? "")
+        return (exitCode, "", "")
     }
 }
