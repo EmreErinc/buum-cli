@@ -1,0 +1,28 @@
+# Preferred run order (unlisted managers run after, in registry order).
+order: [brew, mas, npm]
+
+managers:
+  # Disable a built-in.
+  pip:
+    enabled: false
+
+  # Override a built-in's steps (drop `brew cleanup`).
+  brew:
+    steps:
+      - [brew, update]
+      - [brew, upgrade]
+
+  # Add a custom manager.
+  mytool:
+    detect_bin: mytool
+    steps:
+      - [mytool, self-update]
+
+  # Precondition check: run before steps; non-zero exit skips the manager
+  # (counted as skipped, not failed) with an optional remediation hint.
+  # A `check` here overrides any built-in native precheck (gem, cargo ship one).
+  gem:
+    steps:
+      - [gem, update, --user-install]
+    check: [test, -w, /Library/Ruby/Gems/2.6.0]
+    hint: "use a non-system Ruby (brew install ruby)"
