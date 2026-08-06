@@ -6,11 +6,42 @@ softwareupdate, mise, uv, pnpm, gcloud, conda, composer, gh, deno, bun, yarn,
 port, tlmgr, flutter, ghcup, opam, nix, tldr. Only installed ones run;
 uninstalled managers are skipped by detection.
 
-## Install (from source)
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew tap EmreErinc/tap
+brew install buum
+brew upgrade buum   # get the latest release
+```
+
+### From source
 
 ```bash
 go build -o /usr/local/bin/buum ./cmd/buum
 ```
+
+## Release (maintainers)
+
+Push a new semver tag to trigger the release pipeline (build, GitHub Release,
+Homebrew tap update):
+
+```bash
+./scripts/release.sh v0.1.4
+```
+
+Manual order if you prefer raw git:
+
+```bash
+git push origin main
+git tag v0.1.4
+git push origin v0.1.4
+```
+
+Each tag must be **new on GitHub** — re-pushing an existing tag does not
+trigger the workflow. The repo needs a `TAP_GITHUB_TOKEN` secret with write
+access to `EmreErinc/homebrew-tap`.
 
 ## Usage
 
