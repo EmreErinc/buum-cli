@@ -1,0 +1,37 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: buum
+    main: ./cmd/buum
+    binary: buum
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - name: buum
+    repository:
+      owner: EmreErinc
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/EmreErinc/buum-cli"
+    description: "Fast, multi-package manager updater CLI tool for macOS"
+    license: "MIT"
+    install: |
+      bin.install "buum"
+    test: |
+      system "#{bin}/buum --help"
