@@ -4,29 +4,25 @@ on:
   push:
     tags:
       - 'v*'
+  create:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (e.g. v0.1.4)'
-        required: true
-        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   goreleaser:
+    if: github.event_name != 'create' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
