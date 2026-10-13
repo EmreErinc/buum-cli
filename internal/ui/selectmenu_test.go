@@ -5,7 +5,16 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/emreerinc/buum/pkg/buum"
 )
+
+func TestModelForSeedsFromEnabled(t *testing.T) {
+	m := modelFor([]buum.Manager{{Name: "brew", Enabled: true}, {Name: "pip"}, {Name: "npm", Enabled: true}})
+	if got := m.selected(); !reflect.DeepEqual(got, []string{"brew", "npm"}) {
+		t.Fatalf("expected disabled pip unchecked, got %v", got)
+	}
+}
 
 func TestNewSelectModelAllChecked(t *testing.T) {
 	m := newSelectModel([]string{"brew", "npm", "cargo"})

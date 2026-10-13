@@ -54,8 +54,26 @@ buum --except pip       # all except these
 buum --json             # machine-readable event stream
 buum list               # show detected + known-but-missing managers
 buum config path        # print config file path
+buum config set         # toggle which installed managers are enabled
 buum config edit        # edit config in $EDITOR
 ```
+
+## Choosing managers
+
+`buum config set` lists every installed manager with its current state and
+saves your choice as the default:
+
+```
+? Select managers    3 of 5 selected
+  ↑↓ move · space toggle · a all · / filter · enter confirm · q cancel
+> [x] brew
+  [x] npm
+  [ ] pip
+```
+
+Disabled managers stay in the list, so you can switch them back on. `enter`
+saves and `q`/`esc` cancels without writing. It needs a real terminal. The
+save rewrites the config file, which drops YAML comments and unknown keys.
 
 ## Interactive mode
 
@@ -65,7 +83,7 @@ buum config edit        # edit config in $EDITOR
 - `space` to toggle the selected manager
 - `a` to toggle all managers
 - `/` to filter by name
-- `enter` to run the selected managers
+- `enter` to confirm and run the selected managers
 - `q` or `esc` to cancel
 
 All managers start selected. After choosing, buum asks `Save this selection as

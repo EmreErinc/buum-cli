@@ -19,7 +19,7 @@ import (
 )
 
 // Version is the buum build version.
-const Version = "0.1.1"
+const Version = "0.1.2"
 
 type opts struct {
 	only        []string
@@ -246,7 +246,50 @@ func configCmd(o *opts) *cobra.Command {
 			return ed.Run()
 		},
 	})
+	c.AddCommand(&cobra.Command{
+		Use:   "set",
+		Short: "Toggle which installed managers are enabled",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runConfigSet(o)
+		},
+	})
 	return c
+}
+
+// runConfigSet shows every installed manager (enabled or not) as a checkbox
+// list seeded from the config, and saves the result as the enabled set.
+func runConfigSet(o *opts) error {
+	// No numbered fallback: its "empty = all" would silently enable everything.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		return usageError{errors.New("config set requires a terminal; use 'buum config edit'")}
+	}
+	cfg, err := config.Load(o.configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning:", err)
+	}
+	var installed []buum.Manager
+	for _, m := range cfg.Managers {
+		if buum.DefaultLookup(m.DetectBin) {
+			installed = append(installed, m)
+		}
+	}
+	if len(installed) == 0 {
+		fmt.Fprintln(os.Stderr, "no installed managers found")
+		return nil
+	}
+	names, err := ui.SelectManagers(os.Stdin, os.Stdout, installed)
+	if errors.Is(err, ui.ErrSelectCanceled) {
+		fmt.Fprintln(os.Stderr, "canceled")
+		return nil
+	}
+	if err != nil {
+		return usageError{err}
+	}
+	if err := config.Save(o.configPath, installed, names); err != nil {
+		return err
+	}
+	fmt.Printf("saved %d of %d enabled → %s\n", len(names), len(installed), o.configPath)
+	return nil
 }
 
 func versionCmd() *cobra.Command {

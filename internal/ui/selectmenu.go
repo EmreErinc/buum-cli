@@ -134,9 +134,9 @@ func (m *selectModel) render() string {
 		fmt.Fprintf(&b, "/ %s    %d matches\r\n", m.filter, len(vis))
 	} else {
 		sel, total := m.counts()
-		fmt.Fprintf(&b, "? Select managers to update    %d of %d selected\r\n", sel, total)
+		fmt.Fprintf(&b, "? Select managers    %d of %d selected\r\n", sel, total)
 	}
-	b.WriteString("  ↑↓ move · space toggle · a all · / filter · enter run · q cancel\r\n")
+	b.WriteString("  ↑↓ move · space toggle · a all · / filter · enter confirm · q cancel\r\n")
 
 	if len(vis) == 0 {
 		b.WriteString("  (no matches)\r\n")
@@ -277,6 +277,20 @@ func SelectManagers(in, out *os.File, managers []buum.Manager) ([]string, error)
 	return runSelectMenu(in, out, managers)
 }
 
+// modelFor seeds each checkbox from the manager's Enabled flag, so the menu
+// shows the saved state (disabled managers start unchecked).
+func modelFor(managers []buum.Manager) *selectModel {
+	names := make([]string, len(managers))
+	for i, mg := range managers {
+		names[i] = mg.Name
+	}
+	m := newSelectModel(names)
+	for i, mg := range managers {
+		m.checked[i] = mg.Enabled
+	}
+	return m
+}
+
 func runSelectMenu(in, out *os.File, managers []buum.Manager) ([]string, error) {
 	oldState, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
@@ -284,11 +298,7 @@ func runSelectMenu(in, out *os.File, managers []buum.Manager) ([]string, error) 
 	}
 	defer term.Restore(int(in.Fd()), oldState)
 
-	names := make([]string, len(managers))
-	for i, m := range managers {
-		names[i] = m.Name
-	}
-	m := newSelectModel(names)
+	m := modelFor(managers)
 
 	// Redraw counts logical lines and moves the cursor up that many rows. This
 	// assumes each rendered line occupies exactly one terminal row — true for the
