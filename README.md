@@ -56,6 +56,7 @@ buum list               # show detected + known-but-missing managers
 buum config path        # print config file path
 buum config set         # toggle which installed managers are enabled
 buum config edit        # edit config in $EDITOR
+buum completion zsh sync  # install/refresh zsh tab completion
 ```
 
 ## Choosing managers
@@ -74,6 +75,18 @@ saves your choice as the default:
 Disabled managers stay in the list, so you can switch them back on. `enter`
 saves and `q`/`esc` cancels without writing. It needs a real terminal. The
 save rewrites the config file, which drops YAML comments and unknown keys.
+
+## Shell completion
+
+`buum completion zsh sync` sets up zsh tab completion in one step:
+
+- writes the script to `~/.zsh/completions/_buum`
+- appends `fpath=(~/.zsh/completions $fpath)` plus `compinit` to `~/.zshrc`
+  (or `$ZDOTDIR/.zshrc`) only if no such fpath line exists
+- deletes `~/.zcompdump*` so zsh rebuilds its completion cache
+
+Re-run it after upgrading buum, then `exec zsh`. `buum completion zsh` alone
+still prints the script to stdout.
 
 ## Interactive mode
 

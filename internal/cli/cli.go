@@ -19,7 +19,7 @@ import (
 )
 
 // Version is the buum build version.
-const Version = "0.1.2"
+const Version = "0.1.3"
 
 type opts struct {
 	only        []string
@@ -53,6 +53,7 @@ func Execute() int {
 	f.StringVar(&o.configPath, "config", config.DefaultPath(), "path to config file")
 
 	root.AddCommand(listCmd(o), configCmd(o), versionCmd())
+	addZshSyncCmd(root)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

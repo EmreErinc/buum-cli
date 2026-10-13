@@ -51,6 +51,7 @@ buum --json             # machine-readable event stream (for scripts / future GU
 buum config path        # print config file path
 buum config set         # toggle which installed managers are enabled
 buum config edit        # edit config in $EDITOR
+buum completion zsh sync  # install/refresh zsh tab completion
 buum version
 ```
 
