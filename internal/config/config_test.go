@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/emreerinc/buum/pkg/buum"
@@ -155,5 +156,51 @@ func TestSaveCreatesMissingFile(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("Save should create the file and parents: %v", err)
+	}
+}
+
+func TestSavePreservesCommentsAndUnknownKeys(t *testing.T) {
+	path := writeTemp(t, `# my buum config
+order: [brew, npm] # brew first
+managers:
+  # keep pip off
+  pip:
+    enabled: false
+  brew:
+    steps:
+      - [brew, update]
+    my_note: hand-added
+`)
+	detected := []buum.Manager{{Name: "brew"}, {Name: "npm"}, {Name: "pip"}}
+	if err := Save(path, detected, []string{"brew", "pip"}); err != nil { // npm off, pip back on
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	out := string(raw)
+	for _, want := range []string{"# my buum config", "# brew first", "my_note: hand-added", "npm:\n    enabled: false"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "pip:") {
+		t.Errorf("re-enabled pip entry should be removed:\n%s", out)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := buumManager(cfg)
+	if by["npm"].Enabled || !by["pip"].Enabled || len(by["brew"].Steps) != 1 {
+		t.Errorf("semantic result wrong: npm=%v pip=%v brew steps=%v", by["npm"].Enabled, by["pip"].Enabled, by["brew"].Steps)
+	}
+}
+
+func TestSaveRefusesInvalidConfig(t *testing.T) {
+	path := writeTemp(t, "managers: [not, a, map]\n")
+	if err := Save(path, []buum.Manager{{Name: "brew"}}, nil); err == nil {
+		t.Fatal("expected error for config Load would reject")
+	}
+	if raw, _ := os.ReadFile(path); string(raw) != "managers: [not, a, map]\n" {
+		t.Fatalf("invalid config must be left untouched, got %q", raw)
 	}
 }

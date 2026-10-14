@@ -3,7 +3,9 @@
 macOS updater. Detects installed package managers and runs their update
 commands. Built-ins: brew, mas, npm, pip, pipx, gem, cargo, rustup,
 softwareupdate, mise, uv, pnpm, gcloud, conda, composer, gh, deno, bun, yarn,
-port, tlmgr, flutter, ghcup, opam, nix, tldr. Only installed ones run;
+port, tlmgr, flutter, ghcup, opam, nix, tldr, vscode (extensions), vscodium,
+dotnet (global tools), krew, helm (repos), gup (Go binaries), juliaup, elan,
+pixi, mamba. Only installed ones run;
 uninstalled managers are skipped by detection.
 
 ## Install
@@ -52,6 +54,7 @@ buum --dry-run          # show what would run
 buum --only brew,npm    # subset
 buum --except pip       # all except these
 buum --json             # machine-readable event stream
+buum --retry-failed     # rerun only what failed last time
 buum list               # show detected + known-but-missing managers
 buum config path        # print config file path
 buum config set         # toggle which installed managers are enabled
@@ -61,20 +64,36 @@ buum completion zsh sync  # install/refresh zsh tab completion
 
 ## Choosing managers
 
-`buum config set` lists every installed manager with its current state and
-saves your choice as the default:
+`buum config set` lists every supported manager with its current state,
+grouped into Installed and Not installed, and saves your choice as
+the default:
 
 ```
-? Select managers    3 of 5 selected
+? Select managers    35 of 36 selected
   ↑↓ move · space toggle · a all · / filter · enter confirm · q cancel
+  Installed:
 > [x] brew
-  [x] npm
-  [ ] pip
+  [ ] gem
+  Not installed:
+  [x] pipx
+  ...
+  ↑ 0 more · ↓ 2 more
 ```
+
+The list shows up to 36 lines and scrolls with `↑`/`↓` (fewer in a short
+terminal window).
 
 Disabled managers stay in the list, so you can switch them back on. `enter`
-saves and `q`/`esc` cancels without writing. It needs a real terminal. The
-save rewrites the config file, which drops YAML comments and unknown keys.
+saves and `q`/`esc` cancels without writing. It needs a real terminal. Saving
+keeps your comments and any extra keys; only indentation is normalized.
+
+## Last run and retry
+
+Every real run (not `--dry-run`) saves its report to
+`~/.local/state/buum/last.json` (or `$XDG_STATE_HOME/buum/last.json`), in the
+same shape as the `--json` final report. `buum --retry-failed` reruns only the
+managers marked `failed` there. Skipped managers are not retried, and the
+flag cannot be combined with `--only`, `--except` or `-i`.
 
 ## Shell completion
 

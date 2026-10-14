@@ -69,7 +69,11 @@ managers:
 		t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "--config", cfgPath, "--only", "fake", "--json")
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+cfgDir) // keep last.json out of the real home
 	out, err := cmd.CombinedOutput()
+	if _, serr := os.Stat(filepath.Join(cfgDir, "buum", "last.json")); serr != nil {
+		t.Errorf("run report not saved: %v", serr)
+	}
 	if err != nil {
 		t.Fatalf("json run should exit 0: %v\n%s", err, out)
 	}

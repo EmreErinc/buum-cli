@@ -3,6 +3,7 @@ package buum
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -69,10 +70,10 @@ func BuiltIns() []Manager {
 		}},
 		{Name: "deno", DetectBin: "deno", Enabled: true, Steps: [][]string{
 			{"deno", "upgrade"},
-		}},
+		}, Precheck: notBrewManaged("deno"), Hint: brewHint},
 		{Name: "bun", DetectBin: "bun", Enabled: true, Steps: [][]string{
 			{"bun", "upgrade"},
-		}},
+		}, Precheck: notBrewManaged("bun"), Hint: brewHint},
 		{Name: "yarn", DetectBin: "yarn", Enabled: true, Steps: [][]string{
 			{"yarn", "global", "upgrade"},
 		}},
@@ -87,10 +88,10 @@ func BuiltIns() []Manager {
 
 		{Name: "flutter", DetectBin: "flutter", Enabled: true, Steps: [][]string{
 			{"flutter", "upgrade"},
-		}},
+		}, Precheck: notBrewManaged("flutter"), Hint: brewHint},
 		{Name: "ghcup", DetectBin: "ghcup", Enabled: true, Steps: [][]string{
 			{"ghcup", "upgrade"},
-		}},
+		}, Precheck: notBrewManaged("ghcup"), Hint: brewHint},
 		{Name: "opam", DetectBin: "opam", Enabled: true, Steps: [][]string{
 			{"opam", "update"},
 			{"opam", "upgrade", "-y"},
@@ -102,7 +103,65 @@ func BuiltIns() []Manager {
 		{Name: "tldr", DetectBin: "tldr", Enabled: true, Steps: [][]string{
 			{"tldr", "--update"},
 		}},
+
+		// Editor extensions and language toolchains whose packages brew does not track.
+		{Name: "vscode", DetectBin: "code", Enabled: true, Steps: [][]string{
+			{"code", "--update-extensions"},
+		}},
+		{Name: "vscodium", DetectBin: "codium", Enabled: true, Steps: [][]string{
+			{"codium", "--update-extensions"},
+		}},
+		{Name: "dotnet", DetectBin: "dotnet", Enabled: true, Steps: [][]string{
+			{"dotnet", "tool", "update", "-g", "--all"},
+		}},
+		{Name: "krew", DetectBin: "kubectl-krew", Enabled: true, Steps: [][]string{
+			{"kubectl", "krew", "upgrade"},
+		}},
+		// "helm repo update" fails when no repos exist; "helm repo list" exits 1 then.
+		{Name: "helm", DetectBin: "helm", Enabled: true, Steps: [][]string{
+			{"helm", "repo", "update"},
+		}, Check: []string{"helm", "repo", "list"}, Hint: "no helm repos configured"},
+		{Name: "gup", DetectBin: "gup", Enabled: true, Steps: [][]string{
+			{"gup", "update"},
+		}},
+		{Name: "juliaup", DetectBin: "juliaup", Enabled: true, Steps: [][]string{
+			{"juliaup", "update"},
+		}},
+		{Name: "elan", DetectBin: "elan", Enabled: true, Steps: [][]string{
+			{"elan", "update"},
+		}},
+		{Name: "pixi", DetectBin: "pixi", Enabled: true, Steps: [][]string{
+			{"pixi", "global", "update"},
+		}},
+		{Name: "mamba", DetectBin: "mamba", Enabled: true, Steps: [][]string{
+			{"mamba", "update", "--all", "-y"},
+		}},
 	}
+}
+
+const brewHint = "brew upgrade already updates it"
+
+// notBrewManaged gates self-updaters (bun upgrade, deno upgrade, …): when the
+// binary resolves into a Homebrew Cellar/Caskroom, brew owns it and a self-update
+// would fight brew or fail. If the path cannot be resolved, do not block.
+func notBrewManaged(bin string) func() (bool, string) {
+	return func() (bool, string) {
+		p, err := exec.LookPath(bin)
+		if err != nil {
+			return true, ""
+		}
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			p = real
+		}
+		if isBrewPath(p) {
+			return false, bin + " is installed by Homebrew (" + p + ")"
+		}
+		return true, ""
+	}
+}
+
+func isBrewPath(p string) bool {
+	return strings.Contains(p, "/Cellar/") || strings.Contains(p, "/Caskroom/")
 }
 
 // gemGemdirWritable reports whether `gem update` can write to the active gem dir.

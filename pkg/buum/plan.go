@@ -1,6 +1,9 @@
 package buum
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // Plan is the ordered set of managers to run.
 type Plan struct {
@@ -10,10 +13,19 @@ type Plan struct {
 // ErrSelectionConflict is returned when both Only and Except are supplied.
 var ErrSelectionConflict = errors.New("--only and --except are mutually exclusive")
 
+// ErrUnknownManager is returned when --only/--except names a manager that is
+// not in the config at all (likely a typo), instead of silently matching nothing.
+var ErrUnknownManager = errors.New("unknown manager")
+
 // BuildPlan detects active managers, applies Order, then applies the selection.
 func BuildPlan(cfg Config, sel Selection, look PathLookup) (Plan, error) {
 	if len(sel.Only) > 0 && len(sel.Except) > 0 {
 		return Plan{}, ErrSelectionConflict
+	}
+	for _, n := range append(append([]string{}, sel.Only...), sel.Except...) {
+		if !known(cfg, n) {
+			return Plan{}, fmt.Errorf("%w %q (see 'buum list')", ErrUnknownManager, n)
+		}
 	}
 
 	active := Detect(cfg, look)
@@ -65,6 +77,15 @@ func applyOrder(ms []Manager, order []string) []Manager {
 		}
 	}
 	return out
+}
+
+func known(cfg Config, name string) bool {
+	for _, m := range cfg.Managers {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(xs []string, x string) bool {

@@ -10,7 +10,8 @@ import (
 )
 
 func TestModelForSeedsFromEnabled(t *testing.T) {
-	m := modelFor([]buum.Manager{{Name: "brew", Enabled: true}, {Name: "pip"}, {Name: "npm", Enabled: true}})
+	m := modelFor([]buum.Manager{{Name: "brew", Enabled: true}, {Name: "pip"}, {Name: "npm", Enabled: true}},
+		nil)
 	if got := m.selected(); !reflect.DeepEqual(got, []string{"brew", "npm"}) {
 		t.Fatalf("expected disabled pip unchecked, got %v", got)
 	}
@@ -224,5 +225,32 @@ func TestPromptYesNo(t *testing.T) {
 		if got != want {
 			t.Errorf("input %q: got %v want %v", in, got, want)
 		}
+	}
+}
+
+func TestSectionsAndScrolling(t *testing.T) {
+	m := modelFor([]buum.Manager{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}},
+		map[string]string{"a": "Installed", "b": "Installed", "c": "Not installed", "d": "Not installed"})
+	m.height = 3 // 6 rows total: 2 headers + 4 items
+
+	out := m.render()
+	if !strings.Contains(out, "Installed:") || !strings.Contains(out, "> [ ] a") || strings.Contains(out, "] c") {
+		t.Fatalf("initial window wrong:\n%s", out)
+	}
+	if !strings.Contains(out, "↑ 0 more · ↓ 3 more") {
+		t.Fatalf("missing scroll footer:\n%s", out)
+	}
+
+	m.moveDown()
+	m.moveDown() // cursor on c: window must include its "Not installed:" header
+	out = m.render()
+	if !strings.Contains(out, "Not installed:") || !strings.Contains(out, "> [ ] c") || strings.Contains(out, "] a") {
+		t.Fatalf("scrolled window wrong:\n%s", out)
+	}
+
+	m.moveDown()
+	m.moveDown() // wraps to a: back to top
+	if out = m.render(); !strings.Contains(out, "> [ ] a") || m.top != 0 {
+		t.Fatalf("wrap to top wrong (top=%d):\n%s", m.top, out)
 	}
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,57 +97,124 @@ func apply(m *buum.Manager, fm fileManager) {
 }
 
 // Save merges an interactive selection into the config at path: each detected
-// manager not in selected is written with enabled:false; reselected managers
-// have the flag cleared (minimal diff). Content within the known schema (order,
-// steps, custom managers) is preserved.
+// manager not in selected gets enabled:false; reselected managers have the flag
+// removed (and their entry too, if nothing else is left in it).
 //
-// Limitation: the file is round-tripped through the typed config schema, so
-// comments AND any out-of-schema keys (unrecognized top-level or per-manager
-// fields a user may have hand-added) are dropped on save. Editing the config by
-// hand and using "save as default" are therefore best kept separate.
+// The file is edited as a YAML node tree, not re-encoded from the typed schema,
+// so comments, key order and keys buum does not know survive. Indentation is
+// normalized to 2 spaces. The write is atomic (temp file + rename).
 func Save(path string, detected []buum.Manager, selected []string) error {
-	var fc fileConfig
+	var doc yaml.Node
 	raw, err := os.ReadFile(path)
 	switch {
 	case err == nil:
+		// Typed decode only validates: refuse to edit a file Load would reject.
+		var fc fileConfig
 		if uerr := yaml.Unmarshal(raw, &fc); uerr != nil {
+			return fmt.Errorf("parsing config %s: %w", path, uerr)
+		}
+		if uerr := yaml.Unmarshal(raw, &doc); uerr != nil {
 			return fmt.Errorf("parsing config %s: %w", path, uerr)
 		}
 	case !os.IsNotExist(err):
 		return fmt.Errorf("reading config %s: %w", path, err)
 	}
-	if fc.Managers == nil {
-		fc.Managers = map[string]fileManager{}
+	if doc.Kind == 0 { // missing or empty file
+		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{newMap()}}
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return fmt.Errorf("config %s: top level must be a mapping", path)
 	}
 
 	sel := map[string]bool{}
 	for _, n := range selected {
 		sel[n] = true
 	}
+	managers := mapGet(root, "managers")
 	for _, m := range detected {
-		fm, existed := fc.Managers[m.Name]
 		if sel[m.Name] {
-			if !existed {
+			entry := mapGet(managers, m.Name)
+			if entry == nil {
 				continue // already enabled by default; no entry needed
 			}
-			fm.Enabled = nil // clear any disable
-			fc.Managers[m.Name] = fm
-		} else {
-			no := false
-			fm.Enabled = &no
-			fc.Managers[m.Name] = fm
+			mapDelete(entry, "enabled")
+			if len(entry.Content) == 0 {
+				mapDelete(managers, m.Name)
+			}
+			continue
 		}
+		if managers == nil {
+			managers = mapSet(root, "managers", newMap())
+		}
+		entry := mapGet(managers, m.Name)
+		if entry == nil {
+			entry = mapSet(managers, m.Name, newMap())
+		}
+		mapSet(entry, "enabled", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+	}
+	if managers != nil && len(managers.Content) == 0 {
+		mapDelete(root, "managers")
 	}
 
-	out, err := yaml.Marshal(fc)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("writing config %s: %w", path, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("writing config %s: %w", path, err)
 	}
 	return nil
+}
+
+func newMap() *yaml.Node { return &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"} }
+
+// mapGet returns the value node for key in mapping m, or nil. A null value
+// (e.g. "npm:" with nothing after it) is turned into an empty mapping in place
+// so callers can add keys to it.
+func mapGet(m *yaml.Node, key string) *yaml.Node {
+	if m == nil {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			v := m.Content[i+1]
+			if v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
+				*v = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", LineComment: v.LineComment}
+			}
+			return v
+		}
+	}
+	return nil
+}
+
+// mapSet sets key to val in mapping m (replacing an existing value) and returns val.
+func mapSet(m *yaml.Node, key string, val *yaml.Node) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = val
+			return val
+		}
+	}
+	m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, val)
+	return val
+}
+
+func mapDelete(m *yaml.Node, key string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return
+		}
+	}
 }

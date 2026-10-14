@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -29,6 +30,7 @@ type opts struct {
 	jsonOut     bool
 	verbose     bool
 	configPath  string
+	retryFailed bool
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -51,6 +53,7 @@ func Execute() int {
 	f.BoolVar(&o.jsonOut, "json", false, "machine-readable JSON event output")
 	f.BoolVarP(&o.verbose, "verbose", "v", false, "extra logging")
 	f.StringVar(&o.configPath, "config", config.DefaultPath(), "path to config file")
+	root.Flags().BoolVar(&o.retryFailed, "retry-failed", false, "rerun only the managers that failed in the last run")
 
 	root.AddCommand(listCmd(o), configCmd(o), versionCmd())
 	addZshSyncCmd(root)
@@ -84,6 +87,16 @@ func loadPlan(o *opts) (buum.Config, buum.Plan, error) {
 		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
 	sel := buum.Selection{Only: o.only, Except: o.except}
+	if o.retryFailed {
+		if len(o.only) > 0 || len(o.except) > 0 || o.interactive {
+			return cfg, buum.Plan{}, usageError{errors.New("--retry-failed cannot be combined with --only, --except or -i")}
+		}
+		names, ferr := failedFromLastRun(lastRunPath())
+		if ferr != nil {
+			return cfg, buum.Plan{}, usageError{ferr}
+		}
+		sel = buum.Selection{Names: names} // non-nil: empty means run nothing
+	}
 	plan, perr := buum.BuildPlan(cfg, sel, buum.DefaultLookup)
 	if perr != nil {
 		return cfg, buum.Plan{}, usageError{perr}
@@ -96,10 +109,15 @@ func runUpdate(cmd *cobra.Command, o *opts) error {
 	if err != nil {
 		return err
 	}
+	if o.retryFailed && len(plan.Managers) == 0 {
+		fmt.Fprintln(os.Stderr, "nothing to retry: no failed managers in the last run")
+		lastExit = 0
+		return nil
+	}
 
 	if o.interactive && !o.dryRun {
 		detected := plan.Managers
-		names, serr := ui.SelectManagers(os.Stdin, os.Stdout, plan.Managers)
+		names, serr := ui.SelectManagers(os.Stdin, os.Stdout, plan.Managers, nil)
 		if errors.Is(serr, ui.ErrSelectCanceled) {
 			fmt.Fprintln(os.Stderr, "canceled")
 			lastExit = 0
@@ -122,6 +140,10 @@ func runUpdate(cmd *cobra.Command, o *opts) error {
 		}
 	}
 
+	if !o.dryRun {
+		defer primeSudo(plan)()
+	}
+
 	if o.dryRun {
 		for _, m := range plan.Managers {
 			fmt.Fprintf(os.Stdout, "→ %s\n", m.Name)
@@ -142,6 +164,9 @@ func runUpdate(cmd *cobra.Command, o *opts) error {
 		rep = runTTY(cmd.Context(), plan)
 		ui.Summary(os.Stdout, rep)
 	}
+	if serr := saveLastRun(lastRunPath(), rep); serr != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not save run report:", serr)
+	}
 
 	if rep.Summary.Failed > 0 {
 		lastExit = 1
@@ -149,6 +174,50 @@ func runUpdate(cmd *cobra.Command, o *opts) error {
 		lastExit = 0
 	}
 	return nil
+}
+
+// needsSudo reports whether any step in the plan runs through sudo (built-in or
+// user-configured).
+func needsSudo(plan buum.Plan) bool {
+	for _, m := range plan.Managers {
+		for _, step := range m.Steps {
+			if len(step) > 0 && step[0] == "sudo" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// primeSudo asks for the sudo password once before any manager runs and keeps
+// the sudo timestamp fresh until the returned stop is called, so sudo steps late
+// in a long run do not sit waiting for a password. Best effort: on failure the
+// sudo steps simply prompt as before.
+func primeSudo(plan buum.Plan) (stop func()) {
+	if !needsSudo(plan) || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return func() {}
+	}
+	fmt.Fprintln(os.Stderr, "Some managers need sudo; asking for your password once up front.")
+	v := exec.Command("sudo", "-v")
+	v.Stdin, v.Stdout, v.Stderr = os.Stdin, os.Stderr, os.Stderr
+	if err := v.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: sudo not primed; sudo steps will ask again:", err)
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				exec.Command("sudo", "-n", "-v").Run()
+			}
+		}
+	}()
+	return func() { close(done) }
 }
 
 func runTTY(ctx context.Context, plan buum.Plan) buum.Report {
@@ -257,8 +326,8 @@ func configCmd(o *opts) *cobra.Command {
 	return c
 }
 
-// runConfigSet shows every installed manager (enabled or not) as a checkbox
-// list seeded from the config, and saves the result as the enabled set.
+// runConfigSet shows every known manager (enabled or not) as a checkbox list
+// seeded from the config, installed ones first, and saves the enabled set.
 func runConfigSet(o *opts) error {
 	// No numbered fallback: its "empty = all" would silently enable everything.
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
@@ -268,17 +337,19 @@ func runConfigSet(o *opts) error {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning:", err)
 	}
-	var installed []buum.Manager
+	var installed, missing []buum.Manager
+	sections := map[string]string{}
 	for _, m := range cfg.Managers {
 		if buum.DefaultLookup(m.DetectBin) {
 			installed = append(installed, m)
+			sections[m.Name] = "Installed"
+		} else {
+			missing = append(missing, m)
+			sections[m.Name] = "Not installed"
 		}
 	}
-	if len(installed) == 0 {
-		fmt.Fprintln(os.Stderr, "no installed managers found")
-		return nil
-	}
-	names, err := ui.SelectManagers(os.Stdin, os.Stdout, installed)
+	all := append(installed, missing...)
+	names, err := ui.SelectManagers(os.Stdin, os.Stdout, all, sections)
 	if errors.Is(err, ui.ErrSelectCanceled) {
 		fmt.Fprintln(os.Stderr, "canceled")
 		return nil
@@ -286,10 +357,10 @@ func runConfigSet(o *opts) error {
 	if err != nil {
 		return usageError{err}
 	}
-	if err := config.Save(o.configPath, installed, names); err != nil {
+	if err := config.Save(o.configPath, all, names); err != nil {
 		return err
 	}
-	fmt.Printf("saved %d of %d enabled → %s\n", len(names), len(installed), o.configPath)
+	fmt.Printf("saved %d of %d enabled → %s\n", len(names), len(all), o.configPath)
 	return nil
 }
 

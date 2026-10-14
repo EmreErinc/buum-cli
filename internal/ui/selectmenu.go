@@ -22,8 +22,11 @@ var ErrSelectCanceled = errors.New("selection canceled")
 // indexes into the currently visible slice.
 type selectModel struct {
 	items     []string
+	sections  map[string]string // optional section header per item; items of a section must be contiguous
 	checked   []bool
 	cursor    int
+	height    int // max list lines shown at once (headers included); 0 = no limit
+	top       int // first list line in view; kept by render so the cursor stays visible
 	filter    string
 	filtering bool
 }
@@ -125,6 +128,61 @@ func (m *selectModel) counts() (sel, total int) {
 	return sel, len(m.items)
 }
 
+// listRow is one list line: a section header (item == -1) or a visible item
+// (item = index into visible()).
+type listRow struct {
+	text string
+	item int
+}
+
+func (m *selectModel) rows() []listRow {
+	vis := m.visible()
+	var out []listRow
+	prev := ""
+	for i, orig := range vis {
+		if sec := m.sections[m.items[orig]]; sec != "" && sec != prev {
+			out = append(out, listRow{text: "  " + sec + ":", item: -1})
+			prev = sec
+		}
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "> "
+		}
+		box := "[ ]"
+		if m.checked[orig] {
+			box = "[x]"
+		}
+		out = append(out, listRow{text: cursor + box + " " + m.items[orig], item: i})
+	}
+	return out
+}
+
+// scroll moves top so the cursor row (and its section header, when directly
+// above it) is inside a window of m.height rows.
+func (m *selectModel) scroll(rows []listRow) {
+	if m.height <= 0 || len(rows) <= m.height {
+		m.top = 0
+		return
+	}
+	cr := 0
+	for i, r := range rows {
+		if r.item == m.cursor {
+			cr = i
+			break
+		}
+	}
+	if cr < m.top {
+		m.top = cr
+	}
+	if cr > 0 && rows[cr-1].item == -1 && cr-1 < m.top {
+		m.top = cr - 1
+	}
+	if cr >= m.top+m.height {
+		m.top = cr - m.height + 1
+	}
+	m.top = max(0, min(m.top, len(rows)-m.height))
+}
+
 // render returns the full menu frame. Lines use CRLF for raw-terminal mode.
 func (m *selectModel) render() string {
 	var b strings.Builder
@@ -142,16 +200,17 @@ func (m *selectModel) render() string {
 		b.WriteString("  (no matches)\r\n")
 		return b.String()
 	}
-	for i, orig := range vis {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = "> "
-		}
-		box := "[ ]"
-		if m.checked[orig] {
-			box = "[x]"
-		}
-		fmt.Fprintf(&b, "%s%s %s\r\n", cursor, box, m.items[orig])
+	rows := m.rows()
+	m.scroll(rows)
+	end := len(rows)
+	if m.height > 0 && end > m.top+m.height {
+		end = m.top + m.height
+	}
+	for _, r := range rows[m.top:end] {
+		b.WriteString(r.text + "\r\n")
+	}
+	if above, below := m.top, len(rows)-end; above > 0 || below > 0 {
+		fmt.Fprintf(&b, "  ↑ %d more · ↓ %d more\r\n", above, below)
 	}
 	return b.String()
 }
@@ -270,16 +329,16 @@ func apply(m *selectModel, e keyEvent) action {
 // TTYs; otherwise it falls back to the numbered line prompt. It returns the
 // selected manager names in original order, or ErrSelectCanceled if the user
 // cancels.
-func SelectManagers(in, out *os.File, managers []buum.Manager) ([]string, error) {
+func SelectManagers(in, out *os.File, managers []buum.Manager, sections map[string]string) ([]string, error) {
 	if !term.IsTerminal(int(in.Fd())) || !term.IsTerminal(int(out.Fd())) {
 		return selectNumbered(in, out, managers)
 	}
-	return runSelectMenu(in, out, managers)
+	return runSelectMenu(in, out, managers, sections)
 }
 
 // modelFor seeds each checkbox from the manager's Enabled flag, so the menu
 // shows the saved state (disabled managers start unchecked).
-func modelFor(managers []buum.Manager) *selectModel {
+func modelFor(managers []buum.Manager, sections map[string]string) *selectModel {
 	names := make([]string, len(managers))
 	for i, mg := range managers {
 		names[i] = mg.Name
@@ -288,17 +347,27 @@ func modelFor(managers []buum.Manager) *selectModel {
 	for i, mg := range managers {
 		m.checked[i] = mg.Enabled
 	}
+	m.sections = sections
 	return m
 }
 
-func runSelectMenu(in, out *os.File, managers []buum.Manager) ([]string, error) {
+// listHeight is how many list lines the menu shows before scrolling.
+const listHeight = 36
+
+func runSelectMenu(in, out *os.File, managers []buum.Manager, sections map[string]string) ([]string, error) {
 	oldState, err := term.MakeRaw(int(in.Fd()))
 	if err != nil {
 		return selectNumbered(in, out, managers)
 	}
 	defer term.Restore(int(in.Fd()), oldState)
 
-	m := modelFor(managers)
+	m := modelFor(managers, sections)
+	m.height = listHeight
+	// Shrink to the window (minus title, legend, scroll footer, prompt line) so
+	// the frame never scrolls the terminal, which would break the redraw.
+	if _, rows, err := term.GetSize(int(out.Fd())); err == nil && rows > 0 && rows-4 < m.height {
+		m.height = max(1, rows-4)
+	}
 
 	// Redraw counts logical lines and moves the cursor up that many rows. This
 	// assumes each rendered line occupies exactly one terminal row — true for the

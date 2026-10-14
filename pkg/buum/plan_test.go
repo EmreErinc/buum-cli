@@ -1,6 +1,9 @@
 package buum
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func fixtureCfg() Config {
 	return Config{
@@ -88,5 +91,13 @@ func TestBuildPlanNilNamesIsNoFilter(t *testing.T) {
 	p, _ := BuildPlan(fixtureCfg(), Selection{Names: nil}, allPresent)
 	if !eq(names(p), []string{"npm", "brew", "mas"}) {
 		t.Fatalf("nil Names should keep all, got %v", names(p))
+	}
+}
+
+func TestBuildPlanUnknownNameErrors(t *testing.T) {
+	for _, sel := range []Selection{{Only: []string{"brw"}}, {Except: []string{"nmp"}}} {
+		if _, err := BuildPlan(fixtureCfg(), sel, allPresent); !errors.Is(err, ErrUnknownManager) {
+			t.Fatalf("%+v: want ErrUnknownManager, got %v", sel, err)
+		}
 	}
 }

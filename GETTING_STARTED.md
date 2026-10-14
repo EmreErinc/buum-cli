@@ -48,6 +48,7 @@ buum --dry-run          # preview only
 buum --only brew,npm    # subset
 buum --except pip       # all detected except these
 buum --json             # machine-readable event stream (for scripts / future GUI)
+buum --retry-failed     # rerun only what failed last time
 buum config path        # print config file path
 buum config set         # toggle which installed managers are enabled
 buum config edit        # edit config in $EDITOR

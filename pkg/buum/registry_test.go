@@ -41,6 +41,7 @@ func TestBuiltInsIncludeExpandedManagers(t *testing.T) {
 		"mise", "uv", "pnpm", "gcloud", "conda", "composer", "gh", "deno", "bun", "yarn",
 		"port", "tlmgr",
 		"flutter", "ghcup", "opam", "nix", "tldr",
+		"vscode", "vscodium", "dotnet", "krew", "helm", "gup", "juliaup", "elan", "pixi", "mamba",
 	} {
 		if !names[want] {
 			t.Errorf("expected built-in manager %q", want)
@@ -77,6 +78,19 @@ func TestSoftwareupdateNeedsSudo(t *testing.T) {
 	for _, m := range BuiltIns() {
 		if m.Name == "softwareupdate" && !m.NeedsSudo {
 			t.Error("softwareupdate must set NeedsSudo=true (informational)")
+		}
+	}
+}
+
+func TestIsBrewPath(t *testing.T) {
+	for p, want := range map[string]bool{
+		"/opt/homebrew/Cellar/bun/1.1.0/bin/bun":         true,
+		"/usr/local/Caskroom/flutter/3.0/flutter/bin/fl": true,
+		"/Users/me/.bun/bin/bun":                         false,
+		"/Users/me/.deno/bin/deno":                       false,
+	} {
+		if got := isBrewPath(p); got != want {
+			t.Errorf("isBrewPath(%q) = %v, want %v", p, got, want)
 		}
 	}
 }
