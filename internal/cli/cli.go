@@ -19,8 +19,9 @@ import (
 	"github.com/emreerinc/buum/pkg/buum"
 )
 
-// Version is the buum build version.
-const Version = "0.1.3"
+// Version is the buum build version. Releases set it from the git tag via
+// GoReleaser ldflags (-X .../internal/cli.Version=...); plain go builds say "dev".
+var Version = "dev"
 
 type opts struct {
 	only        []string
